@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+
+<script src="../picogl_js/build/picogl.min.js"></script>
+<script src="../gl-matrix-master/dist/gl-matrix-min.js"></script>
+
+<html>
+  <head>
+    <title>Basic picojl.js App</title>
+    <style>
+      html, body { margin: 0; padding: 0; overflow: hidden; }
+    </style>
+</head>
+<body>
+    <canvas id="webgl-canvas"></canvas>
+</body>
+</html>
+
+
+<script type="shader/vs" id="test_vs">
+  #version 300 es
+  
+  in vec3 position;
+  //in vec3 normal;
+  out vec3 vNormal; // This is what we want to pass to the pixel shader
+  out vec2 modPos;     // basically just saves the verticess model coordinates in x,y, so that we can colour by that later.
+  out vec3 worldSpc;
+  out float edgeCloseness;
+  
+  uniform ShaderGlobals
+  {
+    mat4 modelMat;
+    mat4 viewMat;
+    mat4 projMat;
+    float iTime;    
+    float glowFX;   // controls the strength of the colour increase.
+  };
+  
+  // Noise functions from Inigo Quilez https://www.shadertoy.com/view/XdXGW8
+  vec2 hash( vec2 x ) // replace this by something better
+  {
+    const vec2 k = vec2( 0.3183099, 0.3678794 );
+    x = x*k + k.yx;
+    return -1.0 + 2.0*fract( 16.0 * k*fract( x.x*x.y*(x.x+x.y)) );
+  }
+  
+  float noise( vec2 p )
+  {
+    vec2 i = floor( p );
+    vec2 f = fract( p );
+    vec2 u = f*f*(3.0-2.0*f);
+    return mix( mix( dot( hash( i + vec2(0.0,0.0) ), f - vec2(0.0,0.0) ),
+        dot( hash( i + vec2(1.0,0.0) ), f - vec2(1.0,0.0) ), u.x),
+      mix( dot( hash( i + vec2(0.0,1.0) ), f - vec2(0.0,1.0) ),
+        dot( hash( i + vec2(1.0,1.0) ), f - vec2(1.0,1.0) ), u.x), u.y);
+  }
+
+  float noiseUV( vec2 uv )
+    {
+      uv *= 8.0;
+      mat2 m = mat2( 1.6, 1.2, -1.2, 1.6 );
+      float f = 0.5000*noise( uv ); uv = m*uv;
+      f += 0.2500*noise( uv ); uv = m*uv;
+      f += 0.1250*noise( uv ); uv = m*uv;
+      f += 0.0625*noise( uv ); uv = m*uv;
+      return f;
+  }
+
+  void main() {
+    vec3 nrml = vec3(0, 0, 1);
+
+    vec3 modelPosition = position;
+
+    edgeCloseness = max(abs(modelPosition.x), abs(modelPosition.y));
+
+    // results seem fine, but it it's supposed to get values from 0-1, then we need to abs the vector
+    vec2 myNoise = normalize(vec2(modelPosition.x, modelPosition.y));
+    float zNoise = noiseUV(abs(myNoise));
+    float displacement = (1.0-edgeCloseness) * sin(iTime) * zNoise;
+    modelPosition.z += displacement;
+  
+    vec3 worldPos = (modelMat * vec4(modelPosition, 1.0)).xyz;
+    
+    vec3 viewPos = (viewMat * vec4(worldPos, 1.0)).xyz;
+    
+    vec4 projPos = projMat * vec4(viewPos, 1.0);
+    gl_Position = projPos;
+    //screenPos = gl_Position;
+    
+    //vec3 worldNormal = (modelMat * vec4(normal, 0.0)).xyz;
+    vec3 worldNormal = (modelMat * vec4(nrml, 0.0)).xyz;
+    
+    vec3 viewNormal = (viewMat * vec4(worldNormal, 0.0)).xyz;
+    
+    vNormal = viewNormal;
+    modPos = vec2(position.x, position.y);
+    worldSpc = worldPos;
+
+  }
+</script>
+
+<script type="shader/fs" id="test_fs">
+  #version 300 es
+  precision highp float;
+
+  out vec4 fragColor;
+  in vec3 vNormal; // This is from the vertex shader
+  in vec2 modPos;
+  in vec3 worldSpc;
+  in float edgeCloseness;
+
+  uniform ShaderGlobals
+  {
+    mat4 modelMat;
+    mat4 viewMat;
+    mat4 projMat;
+    float iTime;   
+    float glowFX; 
+  };
+  
+  void main() {
+    
+    // https://www.enkisoftware.com/devlogpost-20150131-1-Normal-generation-in-the-pixel-shader
+    vec3 posDx = dFdx( worldSpc );
+    vec3 posDy = dFdy( worldSpc );
+    vec3 psNormal = normalize( cross( posDx, posDy ) );
+    
+    float shading = dot(psNormal, vec3(0,0.5,-0.5)) * 0.75 + 0.25;
+    fragColor = vec4(shading, shading, shading, 1.0);
+
+    float tempGlow = glowFX;
+    if(glowFX >= 0.0){
+      if(glowFX > 0.5){
+        tempGlow = 0.5 - (tempGlow-0.5);
+      }
+
+      // Sigh, didn't look at the final video enough. This produces grey with red spots.
+      fragColor.gb -= (1.0-edgeCloseness) * sin(tempGlow*2.0);    // subtracting green and blue
+      // This is getting closer.
+      fragColor.r *= (1.0-edgeCloseness) * sin(tempGlow*2.0) * 2.0;    // multiplying the red
+
+    }else{  // gotta turn the rest all blue and green
+      fragColor.r = 0.0;
+    }
+  }
+</script>
+
+<script src="main.js"></script>
